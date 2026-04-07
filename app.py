@@ -118,12 +118,6 @@ def _coerce_editor_rows(edited: Any) -> list[dict[str, Any]]:
     return [_row_to_dict(edited)]
 
 
-def _guess_template_path() -> str | None:
-    here = Path(__file__).resolve().parent
-    candidates = sorted(p for p in here.glob("*.xlsx") if p.is_file())
-    return str(candidates[0]) if candidates else None
-
-
 def _rows_for_export(edited_rows: list[dict[str, Any]]) -> list[Any]:
     row_cls = getattr(models, "ExportRow", None)
     if row_cls is None:
@@ -331,12 +325,6 @@ def main() -> None:
         st.session_state.workbook_filename = None
 
     st.subheader("5) Download Excel")
-    template_path = _guess_template_path()
-    if template_path:
-        st.caption(f"Using workbook template: `{Path(template_path).name}`")
-    else:
-        st.caption("Workbook template: (no .xlsx found in project root)")
-
     if st.session_state.workbook_bytes is None:
         try:
             with st.spinner("Building workbook..."):
@@ -345,7 +333,6 @@ def main() -> None:
                     person_name=st.session_state.person_name,
                     rows=export_rows,
                     receipts=_uploads_as_receipts(st.session_state.uploads),
-                    template_path=template_path,
                     month=dt.date.today().replace(day=1),
                 )
                 st.session_state.workbook_bytes = wb

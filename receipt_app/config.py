@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass(frozen=True)
 class AppConfig:
-    template_path: Path = Path("최광현_2026-02-업무지원금신청.xlsx")
     sheet_name: str = "항목"
+    guide_sheet_name: str = "비목 안내"
     operator_name_cell: str = "C1"
     total_amount_cell: str = "C2"
     month_cell: str = "C3"
+    label_column: str = "A"
+    label_value_start_column: str = "B"
+    table_header_row: int = 4
     table_start_row: int = 5
     table_end_row: int = 24
     number_column: str = "B"
@@ -18,6 +20,7 @@ class AppConfig:
     subcategory_column: str = "D"
     amount_column: str = "E"
     note_column: str = "F"
+    image_header_cell: str = "G3"
     image_anchor_columns: tuple[str, ...] = ("G", "H", "I", "J", "K")
     image_anchor_rows: tuple[int, ...] = (4, 31, 58, 85)
     image_end_row: int = 110
