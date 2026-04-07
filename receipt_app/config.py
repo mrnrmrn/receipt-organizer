@@ -29,7 +29,6 @@ class GuideRow:
 
 @dataclass(frozen=True)
 class AppConfig:
-    ocr_backend: str = "gemini"
     gemini_model: str = "gemini-2.5-flash"
     sheet_name: str = "항목"
     guide_sheet_name: str = "비목 안내"
@@ -95,7 +94,6 @@ class AppConfig:
     image_max_width_px: int = 260
     image_max_height_px: int = 460
     max_receipt_images: int = 20
-    tesseract_languages: str = "kor+eng"
     category_rules: dict[str, tuple[str, str]] = field(
         default_factory=lambda: {
             "택시": ("교통비", "택시"),
