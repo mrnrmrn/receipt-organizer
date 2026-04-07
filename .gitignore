@@ -2,3 +2,6 @@
 2.png
 3.png
 .serena/
+
+# Streamlit secrets (never commit real values)
+.streamlit/secrets.toml
