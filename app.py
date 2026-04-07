@@ -4,6 +4,7 @@ import dataclasses
 import datetime as dt
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -126,9 +127,7 @@ def _rows_for_export(edited_rows: list[dict[str, Any]]) -> list[Any]:
 
     out: list[Any] = []
     for index, d in enumerate(edited_rows, start=1):
-        amount_value = d.get("amount")
-        if amount_value in (None, ""):
-            continue
+        amount = _coerce_amount_value(d.get("amount"))
 
         receipt_date = d.get("receipt_date")
         if isinstance(receipt_date, str) and receipt_date:
@@ -142,13 +141,27 @@ def _rows_for_export(edited_rows: list[dict[str, Any]]) -> list[Any]:
                 number=index,
                 category=(d.get("category") or "기타").strip(),
                 subcategory=(d.get("subcategory") or "기타").strip(),
-                amount=Decimal(str(amount_value).replace(",", "").strip()),
+                amount=amount,
                 vendor=d.get("vendor") or None,
                 receipt_date=receipt_date,
                 notes=d.get("notes") or None,
             )
         )
     return out
+
+
+def _coerce_amount_value(raw_amount: Any) -> Decimal:
+    if raw_amount in (None, ""):
+        return Decimal("0")
+    if isinstance(raw_amount, Decimal):
+        return Decimal("0") if raw_amount.is_nan() else raw_amount
+    if isinstance(raw_amount, float) and math.isnan(raw_amount):
+        return Decimal("0")
+
+    normalized = str(raw_amount).replace(",", "").strip()
+    if not normalized or normalized.lower() == "nan":
+        return Decimal("0")
+    return Decimal(normalized)
 
 
 def _uploads_as_receipts(uploads: list[dict[str, Any]]) -> list[Any]:

@@ -5,6 +5,7 @@ from typing import Any, cast
 from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
+import math
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -554,7 +555,9 @@ def _write_rows(sheet: Worksheet, rows: list[ExportRow], config: AppConfig) -> N
         sub_cell.alignment = LEFT_VCENTER
         sub_cell.number_format = "@"
 
-        sheet[f"{config.amount_column}{row_number}"] = int(export_row.amount)
+        sheet[f"{config.amount_column}{row_number}"] = int(
+            _sanitize_amount(export_row.amount)
+        )
 
 
 def _embed_receipt_images(
@@ -694,9 +697,7 @@ def _coerce_rows(rows: list[ExportRow | Mapping[str, object]]) -> list[ExportRow
             normalized.append(row)
             continue
 
-        amount_value = row.get("amount")
-        if amount_value in (None, ""):
-            continue
+        amount_value = _sanitize_amount(row.get("amount"))
 
         category = str(row.get("category") or "기타").strip()
         subcategory = str(row.get("subcategory") or "기타").strip()
@@ -709,7 +710,7 @@ def _coerce_rows(rows: list[ExportRow | Mapping[str, object]]) -> list[ExportRow
                 number=index,
                 category=category,
                 subcategory=subcategory,
-                amount=Decimal(str(amount_value).replace(",", "").strip()),
+                amount=amount_value,
                 vendor=vendor,
                 receipt_date=receipt_date if isinstance(receipt_date, date) else None,
                 notes=notes,
@@ -723,3 +724,17 @@ def _optional_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _sanitize_amount(raw_amount: object) -> Decimal:
+    if raw_amount in (None, ""):
+        return Decimal("0")
+    if isinstance(raw_amount, Decimal):
+        return Decimal("0") if raw_amount.is_nan() else raw_amount
+    if isinstance(raw_amount, float) and math.isnan(raw_amount):
+        return Decimal("0")
+
+    normalized = str(raw_amount).replace(",", "").strip()
+    if not normalized or normalized.lower() == "nan":
+        return Decimal("0")
+    return Decimal(normalized)
