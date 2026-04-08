@@ -3,22 +3,57 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Optional, cast
 
+from pydantic import BaseModel, ValidationError
 import streamlit as st
 
 from receipt_app.config import DEFAULT_CONFIG
-from receipt_app.models import OCRResult, UploadedReceipt
+from receipt_app.models import OCRResult, StructuredReceiptData, UploadedReceipt
 from receipt_app.utils.images import (
     image_to_png_bytes,
     normalize_receipt_image,
     open_image_from_bytes,
 )
 
-DEFAULT_GEMINI_PROMPT = (
-    "Extract all visible receipt text in reading order. "
-    "Return only the OCR text with line breaks preserved. "
-    "Do not summarize, translate, label fields, or add commentary."
-)
+
+def _build_default_prompt() -> str:
+    allowed_pairs = "\n".join(
+        f"- {category} / {subcategory}"
+        for category, subcategory in DEFAULT_CONFIG.allowed_category_subcategory_pairs
+    )
+    return (
+        "당신은 영수증 구조화 추출기입니다.\n"
+        "입력 이미지는 한국어 영수증 또는 결제내역 캡처입니다.\n"
+        "목표:\n"
+        "- 아래 스키마에 맞는 JSON만 반환합니다.\n"
+        "- 값이 확실하지 않으면 null을 사용합니다.\n"
+        "- 추측하거나 만들어내지 않습니다.\n"
+        "- 설명, 마크다운, 코드블록 없이 JSON만 반환합니다.\n"
+        "추출 규칙:\n"
+        "1. amount는 실제 결제/청구 총액만 반환합니다.\n"
+        "2. receipt_date는 영수증에 보이는 실제 결제일을 우선 사용하고 YYYY-MM-DD 형식으로 반환합니다.\n"
+        "3. vendor는 가맹점/상호명을 짧고 자연스럽게 반환합니다.\n"
+        "4. raw_text에는 영수증에서 읽힌 주요 텍스트를 줄바꿈 포함해서 넣습니다.\n"
+        "5. category, subcategory는 아래 허용 목록 중 하나만 선택합니다.\n"
+        "6. 허용 목록으로 분류가 어렵다면 category와 subcategory는 둘 다 '기타'를 반환합니다.\n"
+        f"{DEFAULT_CONFIG.structured_extraction_guide_text}\n"
+        "허용 category/subcategory 조합:\n"
+        f"{allowed_pairs}"
+    )
+
+
+DEFAULT_GEMINI_PROMPT = _build_default_prompt()
+
+
+class GeminiStructuredReceipt(BaseModel):
+    raw_text: Optional[str] = None
+    amount: Optional[int] = None
+    receipt_date: Optional[str] = None
+    vendor: Optional[str] = None
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    notes: Optional[str] = None
 
 
 def _read_streamlit_secret(name: str) -> str | None:
@@ -39,7 +74,7 @@ def _read_streamlit_section_secret(section: str, key: str) -> str | None:
         return None
 
     if isinstance(value, Mapping):
-        nested_value = value.get(key)
+        nested_value = cast(Mapping[str, object], value).get(key)
         if isinstance(nested_value, str) and nested_value.strip():
             return nested_value.strip()
     return None
@@ -72,16 +107,48 @@ def _collect_response_text(response: object) -> str:
         return text.strip()
 
     parts_text: list[str] = []
-    candidates = getattr(response, "candidates", None) or []
+    candidates = cast(list[object], getattr(response, "candidates", None) or [])
     for candidate in candidates:
         content = getattr(candidate, "content", None)
-        parts = getattr(content, "parts", None) or []
+        parts = cast(list[object], getattr(content, "parts", None) or [])
         for part in parts:
             part_text = getattr(part, "text", None)
             if isinstance(part_text, str) and part_text.strip():
                 parts_text.append(part_text.strip())
 
     return "\n".join(parts_text).strip()
+
+
+def _parse_structured_response(response: object) -> GeminiStructuredReceipt:
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, GeminiStructuredReceipt):
+        return parsed
+    if parsed is not None:
+        return GeminiStructuredReceipt.model_validate(parsed)
+
+    text = _collect_response_text(response)
+    if not text:
+        raise ValueError("Gemini returned an empty structured response.")
+
+    try:
+        return GeminiStructuredReceipt.model_validate_json(text)
+    except ValidationError as exc:
+        raise ValueError("Gemini returned invalid structured receipt JSON.") from exc
+
+
+def _to_structured_receipt_data(
+    structured: GeminiStructuredReceipt,
+) -> StructuredReceiptData:
+    raw_text = (structured.raw_text or "").strip()
+    return StructuredReceiptData(
+        raw_text=raw_text,
+        amount=structured.amount,
+        receipt_date=(structured.receipt_date or "").strip() or None,
+        vendor=(structured.vendor or "").strip() or None,
+        category=(structured.category or "").strip() or None,
+        subcategory=(structured.subcategory or "").strip() or None,
+        notes=(structured.notes or "").strip() or None,
+    )
 
 
 @dataclass
@@ -92,8 +159,8 @@ class GeminiOCRBackend:
     language: str = "ko,en"
 
     def extract_text(self, receipt: UploadedReceipt) -> OCRResult:
-        from google import genai  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
-        from google.genai import types  # pyright: ignore[reportMissingImports]
+        from google import genai
+        from google.genai import types
 
         api_key = _get_server_setting(
             "GEMINI_API_KEY",
@@ -129,10 +196,15 @@ class GeminiOCRBackend:
                     ],
                 )
             ],
-            config=types.GenerateContentConfig(temperature=0),
+            config=types.GenerateContentConfig(
+                temperature=0,
+                response_mime_type="application/json",
+                response_schema=GeminiStructuredReceipt,
+            ),
         )
 
-        text = _collect_response_text(response)
+        structured = _to_structured_receipt_data(_parse_structured_response(response))
+        text = structured.raw_text or _collect_response_text(response)
         if not text:
             raise ValueError("Gemini returned an empty OCR response.")
 
@@ -143,4 +215,5 @@ class GeminiOCRBackend:
             backend_name=self.backend_name,
             language=self.language,
             lines=lines,
+            structured=structured,
         )

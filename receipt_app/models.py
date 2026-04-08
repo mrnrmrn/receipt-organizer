@@ -20,6 +20,18 @@ class OCRResult:
     language: str = "kor+eng"
     confidence: float | None = None
     lines: list[str] = field(default_factory=list)
+    structured: StructuredReceiptData | None = None
+
+
+@dataclass
+class StructuredReceiptData:
+    raw_text: str
+    amount: int | None = None
+    receipt_date: str | None = None
+    vendor: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
+    notes: str | None = None
 
 
 @dataclass
